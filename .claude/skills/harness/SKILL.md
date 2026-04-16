@@ -1,204 +1,129 @@
 ---
 name: harness
-description: Structured development harness that guides feature implementation through 5 phases — Clarify, Context Gather, Plan, Generate, Evaluate. Use this skill when starting a new feature, building a project from scratch, or implementing a complex requirement that benefits from structured planning before coding. Triggers on phrases like "build me X", "implement X", "new feature", "create an app that", or when the user explicitly invokes /harness.
+description: Structured development harness that guides feature implementation through 5 phases — Clarify, Context Gather, Plan, Generate, Evaluate. Each phase runs as an independent sub-agent that produces artifacts for the next phase. Use this skill when starting a new feature, building a project from scratch, or implementing a complex requirement that benefits from structured planning before coding. Triggers on phrases like "build me X", "implement X", "new feature", "create an app that", or when the user explicitly invokes /harness.
 disable-model-invocation: true
 user-invocable: true
 argument-hint: [feature description]
 ---
 
-# Development Harness
+# Development Harness — Orchestrator
 
-A structured 5-phase workflow for implementing features from idea to working code.
+A structured 5-phase workflow where each phase is executed by an independent sub-agent. Artifacts flow between phases via `.harness/artifacts/`.
 
 ## Overview
 
 ```
-Phase 1: Clarify      → Surface questions before writing code
-Phase 2: Context      → Understand the existing codebase
-Phase 3: Plan         → Create tasks.json and phases.json
-Phase 4: Generate     → Execute tasks phase by phase
-Phase 5: Evaluate     → Verify the output works
+Phase 1: Clarify      → Sub-Agent → artifacts/01-clarify.md
+Phase 2: Context      → Sub-Agent → artifacts/02-context.md
+Phase 3: Plan         → Sub-Agent → artifacts/03-plan.md + phases.json + tasks.json
+Phase 4: Generate     → Sub-Agent (per phase) → artifacts/04-generate.md
+Phase 5: Evaluate     → Sub-Agent → artifacts/05-evaluate.md
+```
+
+## Artifact Pipeline
+
+Each sub-agent reads previous phase artifacts and produces its own. All artifacts live in `.harness/artifacts/`.
+
+```
+01-clarify.md ──→ 02-context.md ──→ 03-plan.md ──→ 04-generate.md ──→ 05-evaluate.md
+                                     phases.json
+                                     tasks.json
 ```
 
 ## How to use
 
-The user provides a feature description as `$ARGUMENTS`. Walk through each phase sequentially, getting explicit user approval before advancing to the next phase.
+The user provides a feature description as `$ARGUMENTS`. Execute each phase by spawning a sub-agent using the **Agent tool**. Get explicit user approval before advancing to the next phase.
 
 ---
 
-## Phase 1: Clarify
+## Orchestration Flow
 
-Before touching any code, surface discussion points the user should consider. Generate 5-10 questions organized into these categories:
+### Step 0: Initialize
 
-### Categories
-- **Feasibility**: Can this be built with the proposed stack? Are there technical blockers?
-- **UX/Design**: How should users interact with this? What screens/flows are needed?
-- **Data Model**: What entities, relationships, and storage are needed?
-- **Scope**: What's in v1 vs. later? What can be cut?
-- **Dependencies**: External APIs, libraries, services needed?
-
-### Format
-Present questions as a numbered list grouped by category. Example:
-
-```
-### Feasibility
-1. Are we targeting web only, or also mobile?
-2. Do we need real-time updates or is polling acceptable?
-
-### Data Model
-3. Should users have roles (admin/member) from day one?
-4. Is soft-delete required for any entities?
-```
-
-After presenting questions, wait for the user's answers. Incorporate their decisions into the plan.
-
-**Transition**: When the user has answered (or said "skip"), move to Phase 2.
-
----
-
-## Phase 2: Context Gather
-
-Scan the existing codebase to understand what already exists.
-
-### If the codebase is empty or brand new
-Say: "This is a fresh project — skipping context gathering." and move directly to Phase 3.
-
-### If there is existing code
-1. Read the project structure (directories, key files)
-2. Identify the tech stack (package.json, requirements.txt, go.mod, etc.)
-3. Find existing patterns: routing, state management, API layer, DB schema
-4. Note any existing tests, CI config, or build setup
-5. Summarize findings to the user in under 200 words
-
-Save a brief context summary to `.harness/context.md` for reference in later phases.
-
-**Transition**: Present the summary, then move to Phase 3.
-
----
-
-## Phase 3: Plan
-
-Create a structured execution plan as two JSON files inside `.harness/`.
-
-### 1. Create `.harness/phases.json`
-
-Phases are ordered groups of work that must be completed sequentially. Each phase has a name, description, and list of task IDs.
-
-```json
-{
-  "project": "Feature name from user input",
-  "created_at": "ISO timestamp",
-  "phases": [
-    {
-      "id": "phase-1",
-      "name": "Data Layer",
-      "description": "Set up database schema and models",
-      "task_ids": ["task-1", "task-2"]
-    },
-    {
-      "id": "phase-2",
-      "name": "API Layer",
-      "description": "Build REST endpoints",
-      "task_ids": ["task-3", "task-4"]
-    }
-  ]
-}
-```
-
-### 2. Create `.harness/tasks.json`
-
-Each task is a discrete, implementable unit of work.
-
-```json
-{
-  "tasks": [
-    {
-      "id": "task-1",
-      "phase_id": "phase-1",
-      "title": "Create User table migration",
-      "description": "Detailed description of what to implement",
-      "files_to_create": ["src/db/migrations/001_users.sql"],
-      "files_to_modify": [],
-      "depends_on": [],
-      "status": "pending",
-      "acceptance": "Table exists with columns: id, email, name, created_at"
-    }
-  ]
-}
-```
-
-### Rules for planning
-- Tasks should be small enough to implement in one shot (1-3 files each)
-- Dependencies between tasks must be explicit via `depends_on`
-- All tasks within a phase can run in parallel unless they have inter-dependencies
-- Each task must have a clear `acceptance` criterion
-- File paths in `files_to_create` / `files_to_modify` must be concrete
-
-**Transition**: Show the user the phase/task breakdown as a readable summary table. Wait for approval or edits before proceeding to Phase 4.
-
----
-
-## Phase 4: Generate
-
-Execute tasks using `run_phases.py`. This is the code generation phase.
-
-### Execution flow
-
-1. Read `.harness/phases.json` and `.harness/tasks.json`
-2. For each phase in order:
-   a. For each task in the phase (respecting `depends_on`):
-      - Read the task definition
-      - Implement the task: create/modify the specified files
-      - Update `status` in tasks.json to `"done"`
-      - Log what was done to `.harness/log.md`
-   b. After all tasks in a phase are done, update phase status
-3. After all phases complete, write a summary to `.harness/log.md`
-
-### Implementation rules
-- Follow existing code patterns found in Phase 2 (if any)
-- Use the decisions made in Phase 1 to guide implementation choices
-- Each task should result in working, self-contained code
-- Do not leave placeholder/TODO comments — implement fully
-- After each phase, briefly report progress to the user
-
-### Running the script
-
-If `run_phases.py` exists at the project root, execute it:
+Create `.harness/artifacts/` directory if it doesn't exist:
 ```bash
-python run_phases.py
+mkdir -p .harness/artifacts
 ```
 
-If it doesn't exist, execute tasks inline by following the phases/tasks JSON manually — read each task, implement it, mark it done.
+### Step 1: Clarify Phase
 
-**Transition**: When all tasks are done, move to Phase 5.
+Spawn a sub-agent with the following:
+- **description**: "Clarify phase - surface questions"
+- **prompt**: Read the instructions from `.claude/skills/harness/phases/01-clarify.md` and include `$ARGUMENTS` as the `$FEATURE_DESCRIPTION`. Tell the agent to write its output to `.harness/artifacts/01-clarify.md`.
+
+After the agent completes:
+1. Read `.harness/artifacts/01-clarify.md` and present the questions to the user
+2. Wait for the user's answers
+3. **Update** `.harness/artifacts/01-clarify.md` — fill in the "User Decisions" section with the user's answers
+
+**Gate**: Wait for explicit user approval before proceeding.
+
+### Step 2: Context Gather Phase
+
+Spawn a sub-agent with the following:
+- **description**: "Context gather - scan codebase"
+- **prompt**: Read the instructions from `.claude/skills/harness/phases/02-context.md`. The agent should read `.harness/artifacts/01-clarify.md` as input and write its output to `.harness/artifacts/02-context.md`.
+
+After the agent completes:
+1. Read `.harness/artifacts/02-context.md` and present the summary to the user
+
+**Gate**: Wait for explicit user approval before proceeding.
+
+### Step 3: Plan Phase
+
+Spawn a sub-agent with the following:
+- **description**: "Plan phase - create execution plan"
+- **prompt**: Read the instructions from `.claude/skills/harness/phases/03-plan.md`. The agent should read `.harness/artifacts/01-clarify.md` and `.harness/artifacts/02-context.md` as input, then produce:
+  - `.harness/phases.json`
+  - `.harness/tasks.json`
+  - `.harness/artifacts/03-plan.md`
+
+After the agent completes:
+1. Read `.harness/artifacts/03-plan.md` and present the plan summary table to the user
+2. If the user requests changes, spawn the Plan agent again with the feedback
+
+**Gate**: Wait for explicit user approval before proceeding.
+
+### Step 4: Generate Phase
+
+This phase runs **one sub-agent per execution phase** defined in `.harness/phases.json`.
+
+For each phase in `phases.json` (in order):
+
+1. Spawn a sub-agent with the following:
+   - **description**: "Generate phase - {phase_name}"
+   - **prompt**: Read the instructions from `.claude/skills/harness/phases/04-generate.md`. Set `$PHASE_ID` to the current phase ID (e.g., "phase-1"). The agent should read all previous artifacts and implement only the tasks in that phase. It should update `tasks.json` statuses and append to `.harness/artifacts/04-generate.md`.
+
+2. After the agent completes, briefly report progress to the user:
+   - Which tasks were completed
+   - Current overall progress (e.g., "Phase 2/6 complete, 4/9 tasks done")
+
+3. Initialize `.harness/artifacts/04-generate.md` with a header before the first generate sub-agent:
+   ```markdown
+   # Phase 4: Generate — Artifact
+   ```
+
+**Note**: Each generate sub-agent runs sequentially (phase by phase), but tasks within a phase that have no inter-dependencies can be implemented in parallel by the agent.
+
+**Gate**: After ALL phases are generated, wait for user approval before proceeding to evaluation.
+
+### Step 5: Evaluate Phase
+
+Spawn a sub-agent with the following:
+- **description**: "Evaluate phase - verify output"
+- **prompt**: Read the instructions from `.claude/skills/harness/phases/05-evaluate.md`. The agent should read all artifacts, run available checks, verify acceptance criteria, fix errors, and write results to `.harness/artifacts/05-evaluate.md`.
+
+After the agent completes:
+1. Read `.harness/artifacts/05-evaluate.md` and present the results to the user
+2. If there are remaining issues, report them clearly
 
 ---
 
-## Phase 5: Evaluate
+## Error Handling
 
-Verify that the generated code is correct. This phase is optional but recommended.
-
-### Available checks (run whichever apply)
-
-| Check | When to run | Command |
-|-------|-------------|---------|
-| TypeScript typecheck | If tsconfig.json exists | `npx tsc --noEmit` |
-| ESLint | If .eslintrc* exists | `npx eslint .` |
-| Python type check | If pyproject.toml with mypy | `mypy .` |
-| Python lint | If ruff/flake8 configured | `ruff check .` |
-| Build | If build script exists | `npm run build` or equivalent |
-| Tests | If test files were created | `npm test` / `pytest` / etc. |
-
-### Process
-1. Detect which checks are available based on project config files
-2. Run each applicable check
-3. If errors are found, fix them immediately
-4. Report results to the user
-
-### If no checks are configured
-Tell the user: "No linting/type-checking/build tools are configured. Consider adding: [suggestions based on stack]."
-
----
+- If a sub-agent fails or reports a blocker, present the issue to the user and ask how to proceed
+- If a sub-agent's artifact is missing or malformed, re-run the phase
+- The user can always say "redo phase N" to re-run any specific phase
 
 ## State Management
 
@@ -206,10 +131,15 @@ All harness state lives in `.harness/` at the project root:
 
 ```
 .harness/
-├── context.md       # Codebase context from Phase 2
-├── phases.json      # Phase definitions
-├── tasks.json       # Task definitions with status
-└── log.md           # Execution log
+├── artifacts/
+│   ├── 01-clarify.md      # Phase 1 output: questions + user decisions
+│   ├── 02-context.md      # Phase 2 output: codebase context
+│   ├── 03-plan.md         # Phase 3 output: plan summary
+│   ├── 04-generate.md     # Phase 4 output: generation log
+│   └── 05-evaluate.md     # Phase 5 output: evaluation results
+├── phases.json            # Phase definitions (from Phase 3)
+├── tasks.json             # Task definitions with status (from Phase 3)
+└── log.md                 # Legacy execution log (optional)
 ```
 
 This directory can be safely deleted after the feature is complete, or kept for reference.

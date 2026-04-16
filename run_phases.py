@@ -1,23 +1,30 @@
 #!/usr/bin/env python3
 """
-run_phases.py — Execute tasks defined in .harness/phases.json and .harness/tasks.json.
+run_phases.py — Utility for the harness artifact-based pipeline.
 
-This script reads the harness plan and prints each task that needs to be executed,
-in the correct order (phase by phase, respecting dependencies).
-
-It is designed to be called by Claude Code during Phase 4 of the harness skill.
-Claude reads the output and implements each task.
+Provides commands to:
+- Show status of all phases and tasks
+- Mark tasks as complete
+- Validate artifact pipeline integrity
+- Initialize the artifact directory
 """
 
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 
 HARNESS_DIR = Path(".harness")
+ARTIFACTS_DIR = HARNESS_DIR / "artifacts"
 PHASES_FILE = HARNESS_DIR / "phases.json"
 TASKS_FILE = HARNESS_DIR / "tasks.json"
-LOG_FILE = HARNESS_DIR / "log.md"
+
+ARTIFACT_FILES = {
+    "clarify": ARTIFACTS_DIR / "01-clarify.md",
+    "context": ARTIFACTS_DIR / "02-context.md",
+    "plan": ARTIFACTS_DIR / "03-plan.md",
+    "generate": ARTIFACTS_DIR / "04-generate.md",
+    "evaluate": ARTIFACTS_DIR / "05-evaluate.md",
+}
 
 
 def load_json(path: Path) -> dict:
@@ -33,101 +40,48 @@ def save_json(path: Path, data: dict):
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def append_log(message: str):
-    with open(LOG_FILE, "a") as f:
-        f.write(message + "\n")
+def init():
+    """Initialize the harness artifact directory."""
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Initialized {ARTIFACTS_DIR}/")
 
 
-def topological_sort(tasks: list[dict], task_ids: list[str]) -> list[dict]:
-    """Sort tasks within a phase respecting depends_on."""
-    task_map = {t["id"]: t for t in tasks}
-    phase_tasks = [task_map[tid] for tid in task_ids if tid in task_map]
+def show_status():
+    """Show current progress of all phases and artifacts."""
+    print("=" * 60)
+    print("HARNESS STATUS")
+    print("=" * 60)
 
-    sorted_tasks = []
-    visited = set()
+    # Check artifact pipeline
+    print("\n## Artifact Pipeline\n")
+    for _, path in ARTIFACT_FILES.items():
+        exists = path.exists()
+        size = path.stat().st_size if exists else 0
+        icon = "v" if exists else " "
+        print(f"  [{icon}] {path.name} ({size} bytes)" if exists else f"  [{icon}] {path.name}")
 
-    def visit(task):
-        if task["id"] in visited:
-            return
-        for dep_id in task.get("depends_on", []):
-            if dep_id in task_map and dep_id not in visited:
-                visit(task_map[dep_id])
-        visited.add(task["id"])
-        sorted_tasks.append(task)
+    # Check task progress
+    if TASKS_FILE.exists() and PHASES_FILE.exists():
+        tasks_data = load_json(TASKS_FILE)
+        phases_data = load_json(PHASES_FILE)
 
-    for t in phase_tasks:
-        visit(t)
+        total = len(tasks_data["tasks"])
+        done = sum(1 for t in tasks_data["tasks"] if t["status"] == "done")
+        in_progress = sum(1 for t in tasks_data["tasks"] if t["status"] == "in_progress")
+        pending = total - done - in_progress
 
-    return sorted_tasks
+        print(f"\n## Task Progress: {done}/{total} done ({in_progress} in progress, {pending} pending)\n")
 
-
-def main():
-    phases_data = load_json(PHASES_FILE)
-    tasks_data = load_json(TASKS_FILE)
-
-    all_tasks = tasks_data["tasks"]
-    task_index = {t["id"]: t for t in all_tasks}
-    phases = phases_data["phases"]
-
-    # Initialize log
-    append_log(f"# Harness Execution Log")
-    append_log(f"**Project**: {phases_data.get('project', 'Unknown')}")
-    append_log(f"**Started**: {datetime.now().isoformat()}")
-    append_log("")
-
-    total_tasks = sum(len(p["task_ids"]) for p in phases)
-    done_count = 0
-
-    for phase in phases:
-        phase_id = phase["id"]
-        phase_name = phase["name"]
-
-        print(f"\n{'='*60}")
-        print(f"PHASE: {phase_name} ({phase_id})")
-        print(f"Description: {phase['description']}")
-        print(f"{'='*60}")
-        append_log(f"## {phase_name}")
-        append_log("")
-
-        ordered_tasks = topological_sort(all_tasks, phase["task_ids"])
-
-        for task in ordered_tasks:
-            if task["status"] == "done":
-                print(f"  [SKIP] {task['id']}: {task['title']} (already done)")
-                done_count += 1
-                continue
-
-            print(f"\n--- TASK: {task['id']} ---")
-            print(f"Title: {task['title']}")
-            print(f"Description: {task['description']}")
-            if task.get("files_to_create"):
-                print(f"Files to create: {', '.join(task['files_to_create'])}")
-            if task.get("files_to_modify"):
-                print(f"Files to modify: {', '.join(task['files_to_modify'])}")
-            if task.get("depends_on"):
-                print(f"Depends on: {', '.join(task['depends_on'])}")
-            print(f"Acceptance: {task['acceptance']}")
-            print(f"---")
-
-            # Mark as in-progress
-            task_index[task["id"]]["status"] = "in_progress"
-            save_json(TASKS_FILE, tasks_data)
-
-            # The actual implementation is done by Claude after reading this output.
-            # This script just orchestrates the order and status tracking.
-
-            # Mark as done (Claude will call this script with --complete <task-id>)
-            append_log(f"- [ ] **{task['id']}**: {task['title']}")
-
-            done_count += 1
-
-        append_log("")
-
-    print(f"\n{'='*60}")
-    print(f"All {total_tasks} tasks printed. Ready for implementation.")
-    print(f"{'='*60}")
-
-    append_log(f"**Completed**: {datetime.now().isoformat()}")
+        for phase in phases_data["phases"]:
+            phase_tasks = [t for t in tasks_data["tasks"] if t["id"] in phase["task_ids"]]
+            phase_done = all(t["status"] == "done" for t in phase_tasks)
+            icon = "v" if phase_done else ">"
+            print(f"  [{icon}] {phase['name']}")
+            for t in phase_tasks:
+                status_icon = {"done": "v", "in_progress": ">", "pending": " "}[t["status"]]
+                print(f"      [{status_icon}] {t['id']}: {t['title']}")
+    else:
+        print("\n## Tasks: Not yet planned (run Phase 3)")
 
 
 def complete_task(task_id: str):
@@ -138,50 +92,95 @@ def complete_task(task_id: str):
             task["status"] = "done"
             save_json(TASKS_FILE, tasks_data)
             print(f"Task {task_id} marked as done.")
-
-            # Update log
-            log_content = LOG_FILE.read_text()
-            log_content = log_content.replace(
-                f"- [ ] **{task_id}**:", f"- [x] **{task_id}**:"
-            )
-            LOG_FILE.write_text(log_content)
             return
     print(f"Task {task_id} not found.", file=sys.stderr)
     sys.exit(1)
 
 
-def show_status():
-    """Show current progress."""
+def validate():
+    """Validate artifact pipeline integrity."""
+    errors = []
+
+    # Check artifact ordering
+    for _, path in ARTIFACT_FILES.items():
+        if not path.exists():
+            break  # artifacts should exist in order; stop at first missing
+
+    # Check plan consistency
+    if PHASES_FILE.exists() and TASKS_FILE.exists():
+        phases_data = load_json(PHASES_FILE)
+        tasks_data = load_json(TASKS_FILE)
+        task_ids = {t["id"] for t in tasks_data["tasks"]}
+
+        for phase in phases_data["phases"]:
+            for tid in phase["task_ids"]:
+                if tid not in task_ids:
+                    errors.append(f"Phase {phase['id']} references unknown task {tid}")
+
+        for task in tasks_data["tasks"]:
+            for dep in task.get("depends_on", []):
+                if dep not in task_ids:
+                    errors.append(f"Task {task['id']} depends on unknown task {dep}")
+
+    if errors:
+        print("Validation FAILED:")
+        for e in errors:
+            print(f"  - {e}")
+        sys.exit(1)
+    else:
+        print("Validation passed.")
+
+
+def list_tasks(phase_id: str = None):
+    """List tasks, optionally filtered by phase."""
     tasks_data = load_json(TASKS_FILE)
     phases_data = load_json(PHASES_FILE)
 
-    total = len(tasks_data["tasks"])
-    done = sum(1 for t in tasks_data["tasks"] if t["status"] == "done")
-    in_progress = sum(1 for t in tasks_data["tasks"] if t["status"] == "in_progress")
-    pending = total - done - in_progress
+    if phase_id:
+        phase = next((p for p in phases_data["phases"] if p["id"] == phase_id), None)
+        if not phase:
+            print(f"Phase {phase_id} not found.", file=sys.stderr)
+            sys.exit(1)
+        task_ids = set(phase["task_ids"])
+        tasks = [t for t in tasks_data["tasks"] if t["id"] in task_ids]
+    else:
+        tasks = tasks_data["tasks"]
 
-    print(f"Progress: {done}/{total} tasks done ({in_progress} in progress, {pending} pending)")
-    print()
+    for t in tasks:
+        print(json.dumps(t, indent=2, ensure_ascii=False))
+        print("---")
 
-    for phase in phases_data["phases"]:
-        phase_tasks = [t for t in tasks_data["tasks"] if t["id"] in phase["task_ids"]]
-        phase_done = all(t["status"] == "done" for t in phase_tasks)
-        icon = "v" if phase_done else ">"
-        print(f"  [{icon}] {phase['name']}")
-        for t in phase_tasks:
-            status_icon = {"done": "v", "in_progress": ">", "pending": " "}[t["status"]]
-            print(f"      [{status_icon}] {t['id']}: {t['title']}")
+
+def usage():
+    print(f"""Usage: {sys.argv[0]} <command> [args]
+
+Commands:
+  init                    Initialize artifact directory
+  status                  Show pipeline and task progress
+  complete <task-id>      Mark a task as done
+  validate                Check artifact pipeline integrity
+  tasks [phase-id]        List tasks (optionally for a specific phase)
+""")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        cmd = sys.argv[1]
-        if cmd == "--complete" and len(sys.argv) > 2:
-            complete_task(sys.argv[2])
-        elif cmd == "--status":
-            show_status()
-        else:
-            print(f"Usage: {sys.argv[0]} [--complete <task-id> | --status]")
-            sys.exit(1)
+    if len(sys.argv) < 2:
+        usage()
+        sys.exit(1)
+
+    cmd = sys.argv[1]
+
+    if cmd == "init":
+        init()
+    elif cmd == "status":
+        show_status()
+    elif cmd == "complete" and len(sys.argv) > 2:
+        complete_task(sys.argv[2])
+    elif cmd == "validate":
+        validate()
+    elif cmd == "tasks":
+        phase_id = sys.argv[2] if len(sys.argv) > 2 else None
+        list_tasks(phase_id)
     else:
-        main()
+        usage()
+        sys.exit(1)
