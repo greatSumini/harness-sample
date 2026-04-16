@@ -1,0 +1,42 @@
+{
+  "project": "MoFit - AI Personal Trainer",
+  "created_at": "2026-04-16T00:00:00Z",
+  "phases": [
+    {
+      "id": "phase-1",
+      "name": "Project Setup & Data Layer",
+      "description": "Xcode 프로젝트 생성, 데이터 모델 및 저장소 구현",
+      "task_ids": ["task-1", "task-2"]
+    },
+    {
+      "id": "phase-2",
+      "name": "Onboarding",
+      "description": "온보딩 플로우 구현 (성별, 키, 몸무게, 체형, 목표)",
+      "task_ids": ["task-3"]
+    },
+    {
+      "id": "phase-3",
+      "name": "Home & Tab Structure",
+      "description": "탭 네비게이션, 홈 화면 구현",
+      "task_ids": ["task-4"]
+    },
+    {
+      "id": "phase-4",
+      "name": "Camera & Pose Detection",
+      "description": "카메라 뷰, 손바닥 인식, 바디포즈 인식 구현",
+      "task_ids": ["task-5", "task-6"]
+    },
+    {
+      "id": "phase-5",
+      "name": "Workout Tracking",
+      "description": "운동 트래킹 화면 - 카운트다운, 스쿼트 카운팅, 세트 관리",
+      "task_ids": ["task-7"]
+    },
+    {
+      "id": "phase-6",
+      "name": "Records & AI Coaching",
+      "description": "기록탭, AI 코칭탭 구현",
+      "task_ids": ["task-8", "task-9"]
+    }
+  ]
+}
